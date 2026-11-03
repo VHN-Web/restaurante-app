@@ -177,29 +177,32 @@ export default function App() {
   const fullAddress = `${street}${houseNumber ? `, Nº ${houseNumber}` : ''}${complement ? ` (${complement})` : ''}${street ? ', João Pessoa, PB' : ''}`;
   const [realDeliveryInfo, setRealDeliveryInfo] = useState({ distanceKm: 0, fee: 4.00, loading: false });
 
-  // --- FUNÇÃO DE CÁLCULO DE DISTÂNCIA LOCAL (100% COMPATÍVEL COM NAVEGADOR / VERCEL) ---
-const fetchGoogleDistance = async (destinationAddress) => {
-  if (!destinationAddress || !street.trim() || !houseNumber.trim()) return;
+  // --- FUNÇÃO DE CÁLCULO VIA API INTERNA DA VERCEL (SEM CORS) ---
+  const fetchGoogleDistance = async (destinationAddress) => {
+    if (!destinationAddress || !street.trim() || !houseNumber.trim()) return;
 
-  setRealDeliveryInfo(prev => ({ ...prev, loading: true }));
+    setRealDeliveryInfo(prev => ({ ...prev, loading: true }));
 
-  try {
-    // Simulação precisa baseada no comprimento do endereço ou cálculo por faixas
-    // Para um comércio local, você pode calibrar um valor padrão seguro por km (ex: R$ 4,00 base + R$ 1,50/km)
-    const length = destinationAddress.trim().length;
-    const distanceKm = parseFloat((1.2 + (length % 7) * 0.4).toFixed(1)); // Exemplo dinâmico de 1.2km a 4km
-    const fee = parseFloat((4.00 + distanceKm * 1.50).toFixed(2));
+    try {
+      // Chama a rota serverless hospedada na própria Vercel
+      const response = await fetch(`/api/distance?destination=${encodeURIComponent(destinationAddress)}`);
+      const data = await response.json();
 
-    // Simula um pequeno delay de resposta igual a uma API real
-    setTimeout(() => {
-      setRealDeliveryInfo({ distanceKm, fee, loading: false });
-    }, 400);
-
-  } catch (error) {
-    console.error('Erro ao calcular taxa de entrega:', error);
-    setRealDeliveryInfo(prev => ({ ...prev, loading: false }));
-  }
-};
+      if (data.status === 'OK' && data.rows[0]?.elements[0]?.status === 'OK') {
+        const distanceInMeters = data.rows[0].elements[0].distance.value;
+        const distanceKm = parseFloat((distanceInMeters / 1000).toFixed(1));
+        const fee = parseFloat((4.00 + distanceKm * 1.50).toFixed(2));
+        
+        setRealDeliveryInfo({ distanceKm, fee, loading: false });
+      } else {
+        console.warn('Google Maps retornou um status inválido:', data);
+        setRealDeliveryInfo(prev => ({ ...prev, loading: false }));
+      }
+    } catch (error) {
+      console.error('Erro ao consultar API de distância:', error);
+      setRealDeliveryInfo(prev => ({ ...prev, loading: false }));
+    }
+  };
 
   useEffect(() => {
     if (orderType === 'DELIVERY' && street.trim() && houseNumber.trim()) {
