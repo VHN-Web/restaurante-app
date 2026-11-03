@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Utensils, 
   ShoppingBag, 
@@ -23,6 +23,34 @@ import {
   LogOut,
   KeyRound
 } from 'lucide-react';
+
+// --- CONFIGURAÇÃO E INICIALIZAÇÃO DO FIREBASE ---
+import { initializeApp } from 'firebase/app';
+import { 
+  getFirestore, 
+  collection, 
+  addDoc, 
+  onSnapshot, 
+  updateDoc, 
+  doc, 
+  deleteDoc, 
+  getDocs,
+  query,
+  orderBy
+} from 'firebase/firestore';
+
+// NOVAS CREDENCIAIS DO PROJETO TOCA-B1107
+const firebaseConfig = {
+  apiKey: "AIzaSyDXRvsTqRgnyvxpHAvpqWy3dl0wd5TyJLk",
+  authDomain: "toca-b1107.firebaseapp.com",
+  projectId: "toca-b1107",
+  storageBucket: "toca-b1107.firebasestorage.app",
+  messagingSenderId: "917547065874",
+  appId: "1:917547065874:web:6c2720edaa16ecee23aecb"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
 
 // --- BANCO DE DADOS SIMULADO DO CARDÁPIO ---
 const MENU_CATEGORIES = ['Todos', 'Hambúrgueres', 'Pratos Principais', 'Bebidas', 'Sobremesas'];
@@ -94,8 +122,27 @@ const MENU_ITEMS = [
 ];
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('client'); // client, kitchen, driver
+  const [activeTab, setActiveTab] = useState('client');
   const [orders, setOrders] = useState([]);
+
+  // ESCUTA EM TEMPO REAL DO FIREBASE FIRESTORE
+  useEffect(() => {
+    const ordersRef = collection(db, 'orders');
+    const q = query(ordersRef, orderBy('createdAtTimestamp', 'desc'));
+    
+    // O onSnapshot atualiza o estado instantaneamente em todos os dispositivos conectados
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const fetchedOrders = snapshot.docs.map(docSnap => ({
+        firestoreId: docSnap.id,
+        ...docSnap.data()
+      }));
+      setOrders(fetchedOrders);
+    }, (error) => {
+      console.error("Erro ao sincronizar pedidos com Firebase:", error);
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   // ESTADO DE AUTENTICAÇÃO DO STAFF (Senha: 4040)
   const [isAuthenticatedStaff, setIsAuthenticatedStaff] = useState(false);
@@ -104,7 +151,7 @@ export default function App() {
   const [pinError, setPinError] = useState('');
 
   // ESTADOS DO CLIENTE E CARRINHO
-  const [orderType, setOrderType] = useState('LOCAL'); // LOCAL ou DELIVERY
+  const [orderType, setOrderType] = useState('LOCAL');
   const [selectedTable, setSelectedTable] = useState('Mesa 05');
   const [selectedCategory, setSelectedCategory] = useState('Todos');
   const [searchTerm, setSearchTerm] = useState('');
@@ -133,14 +180,9 @@ export default function App() {
 
   // ENDEREÇO FIXO DA SEDE DO RESTAURANTE (ORIGEM)
   const RESTAURANT_ORIGIN = 'Rua do Orvalho, 310, João Pessoa, PB';
+  const GOOGLE_MAPS_API_KEY = 'AIzaSyDrhTuu5nAFQfxAtfnWlfbVKveLTu2EDtk';
 
-  // SUA CHAVE DA API DO GOOGLE CLOUD ATIVADA
-  const GOOGLE_MAPS_API_KEY = 'AIzaSyDrhTuu5nAFQfxAtfnWlfbVKveLTu2EDtk'; 
-
-  // COMBINAÇÃO DOS CAMPOS DE ENDEREÇO DO CLIENTE (DESTINO)
   const fullAddress = `${street}${houseNumber ? `, Nº ${houseNumber}` : ''}${complement ? ` (${complement})` : ''}${street ? ', João Pessoa, PB' : ''}`;
-
-  // ESTADO DA DISTÂNCIA E TAXA REAL CALCULADA VIA GOOGLE MAPS API
   const [realDeliveryInfo, setRealDeliveryInfo] = useState({ distanceKm: 0, fee: 4.00, loading: false });
 
   // FUNÇÃO DE CÁLCULO VIA GOOGLE ROUTES API / DISTANCE MATRIX API
@@ -149,7 +191,6 @@ export default function App() {
 
     setRealDeliveryInfo(prev => ({ ...prev, loading: true }));
 
-    // Se a chave da API ainda não foi inserida, faz a simulação dinamarquesa de percurso curto
     if (!GOOGLE_MAPS_API_KEY || GOOGLE_MAPS_API_KEY === 'SUA_CHAVE_AQUI') {
       const length = destinationAddress.trim().length;
       const distanceKm = parseFloat((0.3 + (length % 10) * 0.1).toFixed(1));
@@ -159,7 +200,6 @@ export default function App() {
     }
 
     try {
-      // 1. TENTATIVA COM A NOVA ROUTES API (GOOGLE MAPS V2)
       const routesUrl = `https://routes.googleapis.com/v1/computeRoutes`;
       
       const response = await fetch(routesUrl, {
@@ -181,14 +221,11 @@ export default function App() {
       if (data.routes && data.routes[0]?.distanceMeters !== undefined) {
         const distanceInMeters = data.routes[0].distanceMeters;
         const distanceKm = parseFloat((distanceInMeters / 1000).toFixed(1));
-        
-        // Taxa Base R$ 4,00 + R$ 1,50 por Km
         const fee = parseFloat((4.00 + distanceKm * 1.50).toFixed(2));
         setRealDeliveryInfo({ distanceKm, fee, loading: false });
         return;
       }
 
-      // 2. FALLBACK PARA DISTANCE MATRIX NATIVA CASO NECESSÁRIO
       const originParam = encodeURIComponent(RESTAURANT_ORIGIN);
       const destParam = encodeURIComponent(destinationAddress);
       const fallbackUrl = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${originParam}&destinations=${destParam}&key=${GOOGLE_MAPS_API_KEY}`;
@@ -209,25 +246,20 @@ export default function App() {
     }
   };
 
-  // EFEITO PARA DISPARAR A API QUANDO O CLIENTE PREENCHER O ENDEREÇO
   React.useEffect(() => {
     if (orderType === 'DELIVERY' && street.trim() && houseNumber.trim()) {
       const timer = setTimeout(() => {
         fetchGoogleDistance(fullAddress);
-      }, 800); // Debounce de 800ms para evitar chamadas excessivas durante a digitação
+      }, 800);
       return () => clearTimeout(timer);
     }
   }, [street, houseNumber, complement, orderType]);
 
   const deliveryFee = orderType === 'DELIVERY' ? realDeliveryInfo.fee : 0;
-
-  // ESTADO DE IMPRESSÃO
   const [printModalData, setPrintModalData] = useState(null);
 
-  // MANIPULADORES DE ENTRADA COM RESTRIÇÃO DE CARACTERES
   const handleNameChange = (e) => {
     const val = e.target.value;
-    // Permite apenas letras (incluindo acentos) e espaços
     if (/^[a-zA-ZáàâãéèêíïóôõöúçñÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ\s]*$/.test(val)) {
       setCustomerName(val);
       setCheckoutError('');
@@ -236,21 +268,26 @@ export default function App() {
 
   const handlePhoneChange = (e) => {
     const val = e.target.value;
-    // Permite apenas números e limita a 11 dígitos
     if (/^\d*$/.test(val) && val.length <= 11) {
       setCustomerPhone(val);
       setCheckoutError('');
     }
   };
 
-  // LIMPAR TODOS OS PEDIDOS (RESET DIÁRIO COM MODAL PRÓPRIO)
+  // LIMPAR TODOS OS PEDIDOS NO FIREBASE
   const handleClearAllOrders = () => {
     setIsResetConfirmOpen(true);
   };
 
-  const confirmClearAllOrders = () => {
-    setOrders([]);
-    setIsResetConfirmOpen(false);
+  const confirmClearAllOrders = async () => {
+    try {
+      const snapshot = await getDocs(collection(db, 'orders'));
+      const deletePromises = snapshot.docs.map(docSnap => deleteDoc(doc(db, 'orders', docSnap.id)));
+      await Promise.all(deletePromises);
+      setIsResetConfirmOpen(false);
+    } catch (err) {
+      console.error("Erro ao limpar pedidos no Firebase:", err);
+    }
   };
 
   // AUTENTICAÇÃO STAFF
@@ -272,7 +309,6 @@ export default function App() {
     setActiveTab('client');
   };
 
-  // MANIPULAÇÃO DE ITENS NO MODAL DE CUSTOMIZAÇÃO
   const handleOpenCustomizeModal = (item) => {
     setCustomizingItem(item);
     setTempRemovedIngredients([]);
@@ -318,16 +354,14 @@ export default function App() {
     }));
   };
 
-  // VALORES TOTAIS
   const cartSubtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
   const cartTotal = cartSubtotal + deliveryFee;
 
-  // ENVIAR PEDIDO
-  const handleSubmitOrder = (e) => {
+  // ENVIAR PEDIDO PARA O FIREBASE FIRESTORE
+  const handleSubmitOrder = async (e) => {
     e.preventDefault();
     if (cart.length === 0) return;
 
-    // VALIDAÇÕES ESPECÍFICAS
     if (!customerName.trim()) {
       setCheckoutError('Por favor, informe seu nome.');
       return;
@@ -344,15 +378,18 @@ export default function App() {
       }
     }
 
+    const orderId = `PED-${Math.floor(1000 + Math.random() * 9000)}`;
+
     const newOrder = {
-      id: `PED-${Math.floor(1000 + Math.random() * 9000)}`,
+      id: orderId,
       createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      createdAtTimestamp: Date.now(),
       type: orderType,
       table: orderType === 'LOCAL' ? selectedTable : '',
       customerName: customerName.trim(),
       phone: customerPhone,
       address: orderType === 'DELIVERY' ? fullAddress : '',
-      distanceKm: orderType === 'DELIVERY' ? currentDeliveryInfo.distanceKm : 0,
+      distanceKm: orderType === 'DELIVERY' ? realDeliveryInfo.distanceKm : 0,
       deliveryFee: orderType === 'DELIVERY' ? deliveryFee : 0,
       paymentMethod,
       changeFor: paymentMethod === 'Dinheiro' ? changeFor : '',
@@ -361,22 +398,36 @@ export default function App() {
       total: cartTotal
     };
 
-    setOrders([newOrder, ...orders]);
-    setCart([]);
-    setCustomerName('');
-    setCustomerPhone('');
-    setStreet('');
-    setHouseNumber('');
-    setComplement('');
-    setCheckoutError('');
-    setIsCheckoutOpen(false);
-    setIsCartOpen(false);
+    try {
+      // Salva na nuvem no Firebase
+      await addDoc(collection(db, 'orders'), newOrder);
 
-    alert(`Pedido #${newOrder.id} enviado com sucesso! Acompanhe o preparo com nossa equipe.`);
+      setCart([]);
+      setCustomerName('');
+      setCustomerPhone('');
+      setStreet('');
+      setHouseNumber('');
+      setComplement('');
+      setCheckoutError('');
+      setIsCheckoutOpen(false);
+      setIsCartOpen(false);
+
+      alert(`Pedido #${orderId} enviado com sucesso! Acompanhe o preparo com nossa equipe.`);
+    } catch (err) {
+      console.error("Erro ao enviar pedido ao Firebase:", err);
+      alert("Houve um erro ao enviar seu pedido. Verifique se criou a coleção de dados no Firebase no modo de teste.");
+    }
   };
 
-  const handleUpdateOrderStatus = (orderId, newStatus) => {
-    setOrders(orders.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+  // ATUALIZAR STATUS DO PEDIDO NO FIREBASE
+  const handleUpdateOrderStatus = async (order, newStatus) => {
+    if (!order.firestoreId) return;
+    try {
+      const orderRef = doc(db, 'orders', order.firestoreId);
+      await updateDoc(orderRef, { status: newStatus });
+    } catch (err) {
+      console.error("Erro ao atualizar status no Firebase:", err);
+    }
   };
 
   const filteredMenuItems = MENU_ITEMS.filter(item => {
@@ -401,7 +452,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* NAVEGAÇÃO DE ABAS RESTRITA PARA O STAFF */}
           {isAuthenticatedStaff ? (
             <div className="flex items-center gap-2">
               <button
@@ -456,13 +506,9 @@ export default function App() {
       {/* CONTEÚDO PRINCIPAL */}
       <main className="max-w-7xl mx-auto px-4 pt-6">
 
-        {/* ========================================== */}
-        {/* VISÃO 1: CARDÁPIO DIGITAL DO CLIENTE       */}
-        {/* ========================================== */}
+        {/* VISÃO 1: CARDÁPIO DIGITAL */}
         {activeTab === 'client' && (
           <div className="space-y-6">
-            
-            {/* TIPO DE CONSUMO: LOCAL OU DELIVERY */}
             <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Modo de Pedido:</span>
@@ -499,7 +545,6 @@ export default function App() {
               )}
             </div>
 
-            {/* FILTROS E BUSCA DE PRODUTOS */}
             <div className="space-y-4">
               <div className="flex items-center bg-white px-3 py-2 rounded-2xl border border-slate-200 shadow-sm">
                 <Search size={18} className="text-slate-400 mr-2" />
@@ -529,7 +574,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* LISTA DE PRATOS DO CARDÁPIO */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {filteredMenuItems.map(item => (
                 <div key={item.id} className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
@@ -561,13 +605,10 @@ export default function App() {
                 </div>
               ))}
             </div>
-
           </div>
         )}
 
-        {/* ========================================== */}
-        {/* VISÃO 2: PAINEL DA COZINHA (KDS)           */}
-        {/* ========================================== */}
+        {/* VISÃO 2: PAINEL DA COZINHA (KDS) */}
         {activeTab === 'kitchen' && (
           <div className="space-y-6">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
@@ -576,27 +617,25 @@ export default function App() {
                   <ChefHat className="text-orange-600" size={24} />
                   Painel de Monitoramento da Cozinha (KDS)
                 </h2>
-                <p className="text-xs text-slate-500">Gestão de preparação de pedidos e observações de ingredientes</p>
+                <p className="text-xs text-slate-500">Sincronizado via Firebase Firestore em Tempo Real</p>
               </div>
               <div className="flex items-center gap-2">
                 {orders.length > 0 && (
                   <button
                     onClick={handleClearAllOrders}
                     className="flex items-center gap-1.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-all"
-                    title="Limpar todos os pedidos acumulados"
                   >
                     <Trash2 size={14} />
                     Limpar Todos os Pedidos
                   </button>
                 )}
-                <div className="flex items-center gap-2 text-xs font-semibold bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200">
+                <div className="flex items-center gap-2 text-xs font-semibold bg-emerald-50 text-emerald-800 px-3 py-1.5 rounded-lg border border-emerald-200">
                   <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                  Atualização em Tempo Real
+                  Firebase Online
                 </div>
               </div>
             </div>
 
-            {/* LISTA DE COMANDAS DA COZINHA */}
             {orders.length === 0 ? (
               <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-slate-400">
                 <Utensils size={48} className="mx-auto mb-3 opacity-30" />
@@ -606,14 +645,13 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {orders.map(order => (
                   <div 
-                    key={order.id} 
+                    key={order.firestoreId || order.id} 
                     className={`bg-white rounded-2xl border-2 overflow-hidden shadow-sm flex flex-col justify-between transition-all ${
                       order.status === 'PENDENTE' ? 'border-amber-400' :
                       order.status === 'EM_PREPARO' ? 'border-blue-500' : 'border-slate-200 opacity-75'
                     }`}
                   >
                     <div>
-                      {/* CABEÇALHO DA COMANDA DE COZINHA */}
                       <div className={`p-4 border-b flex items-center justify-between ${
                         order.status === 'PENDENTE' ? 'bg-amber-50 border-amber-200' :
                         order.status === 'EM_PREPARO' ? 'bg-blue-50 border-blue-200' : 'bg-slate-100 border-slate-200'
@@ -635,13 +673,11 @@ export default function App() {
                         <button
                           onClick={() => setPrintModalData({ order, type: 'KITCHEN' })}
                           className="p-2 bg-white rounded-xl border border-slate-200 text-slate-600 hover:text-orange-600 hover:border-orange-300 transition-all shadow-sm"
-                          title="Imprimir Comanda da Cozinha"
                         >
                           <Printer size={18} />
                         </button>
                       </div>
 
-                      {/* CORPO DE ITENS DO PEDIDO */}
                       <div className="p-4 space-y-4">
                         {order.items.map((item, idx) => (
                           <div key={idx} className="border-b border-slate-100 pb-3 last:border-0 last:pb-0">
@@ -654,7 +690,6 @@ export default function App() {
                               </span>
                             </div>
 
-                            {/* DESTAQUE DE INGREDIENTES REMOVIDOS EM RED/ALERTA */}
                             {item.removedIngredients && item.removedIngredients.length > 0 && (
                               <div className="mt-2 bg-red-50 border border-red-200 rounded-lg p-2 flex items-start gap-1.5">
                                 <AlertTriangle size={14} className="text-red-600 shrink-0 mt-0.5" />
@@ -671,7 +706,6 @@ export default function App() {
                               </div>
                             )}
 
-                            {/* OBSERVAÇÕES DO PRATO */}
                             {item.notes && (
                               <p className="text-xs font-semibold text-amber-800 bg-amber-50 p-1.5 rounded mt-1.5 border border-amber-200">
                                 Obs: {item.notes}
@@ -682,12 +716,11 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* AÇÕES DE MUDANÇA DE STATUS DA COZINHA */}
                     <div className="p-4 bg-slate-50 border-t border-slate-200 space-y-2">
                       <p className="text-xs text-slate-500 font-medium">Status do Preparo:</p>
                       <div className="grid grid-cols-2 gap-2">
                         <button
-                          onClick={() => handleUpdateOrderStatus(order.id, 'EM_PREPARO')}
+                          onClick={() => handleUpdateOrderStatus(order, 'EM_PREPARO')}
                           className={`py-2 px-3 rounded-xl text-xs font-bold transition-all ${
                             order.status === 'EM_PREPARO' 
                               ? 'bg-blue-600 text-white shadow-md' 
@@ -697,7 +730,7 @@ export default function App() {
                           Em Preparo
                         </button>
                         <button
-                          onClick={() => handleUpdateOrderStatus(order.id, 'PRONTO')}
+                          onClick={() => handleUpdateOrderStatus(order, 'PRONTO')}
                           className={`py-2 px-3 rounded-xl text-xs font-bold transition-all ${
                             order.status === 'PRONTO' 
                               ? 'bg-emerald-600 text-white shadow-md' 
@@ -716,9 +749,7 @@ export default function App() {
           </div>
         )}
 
-        {/* ========================================== */}
-        {/* VISÃO 3: PAINEL DO ENTREGADOR (EXPEDIÇÃO)  */}
-        {/* ========================================== */}
+        {/* VISÃO 3: PAINEL DO ENTREGADOR */}
         {activeTab === 'driver' && (
           <div className="space-y-6">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
@@ -727,13 +758,12 @@ export default function App() {
                   <Bike className="text-orange-600" size={24} />
                   Painel de Expedição e Entregadores
                 </h2>
-                <p className="text-xs text-slate-500">Gestão de rotas, endereços e notas de entrega</p>
+                <p className="text-xs text-slate-500">Sincronizado via Firebase Firestore em Tempo Real</p>
               </div>
               {orders.length > 0 && (
                 <button
                   onClick={handleClearAllOrders}
                   className="flex items-center gap-1.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-all"
-                  title="Limpar todos os pedidos acumulados"
                 >
                   <Trash2 size={14} />
                   Limpar Todos os Pedidos
@@ -741,7 +771,6 @@ export default function App() {
               )}
             </div>
 
-            {/* FILTRAGEM APENAS DE PEDIDOS DO TIPO DELIVERY */}
             {orders.filter(o => o.type === 'DELIVERY').length === 0 ? (
               <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-slate-400">
                 <Bike size={48} className="mx-auto mb-3 opacity-30" />
@@ -750,9 +779,8 @@ export default function App() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {orders.filter(o => o.type === 'DELIVERY').map(order => (
-                  <div key={order.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col justify-between">
+                  <div key={order.firestoreId || order.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col justify-between">
                     <div>
-                      {/* TOPO DO CARTÃO DE ENTREGA */}
                       <div className="bg-slate-900 text-white p-4 flex items-center justify-between">
                         <div>
                           <div className="flex items-center gap-2">
@@ -777,7 +805,6 @@ export default function App() {
                         </button>
                       </div>
 
-                      {/* INFORMAÇÕES DO CLIENTE E ENDEREÇO */}
                       <div className="p-4 space-y-3">
                         <div className="flex items-start gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
                           <User size={18} className="text-slate-500 shrink-0 mt-0.5" />
@@ -816,7 +843,6 @@ export default function App() {
                           </div>
                         </div>
 
-                        {/* DETALHES DE PAGAMENTO E TAXA DE ENTREGA */}
                         <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1.5">
                           <div className="flex justify-between text-xs">
                             <span className="text-slate-500 font-medium">Forma de Pagamento:</span>
@@ -840,10 +866,9 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* ATUALIZAR STATUS DE ENTREGA */}
                     <div className="p-4 bg-slate-50 border-t border-slate-200 flex gap-2">
                       <button
-                        onClick={() => handleUpdateOrderStatus(order.id, 'EM_ROTA')}
+                        onClick={() => handleUpdateOrderStatus(order, 'EM_ROTA')}
                         className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all ${
                           order.status === 'EM_ROTA' 
                             ? 'bg-blue-600 text-white shadow-md' 
@@ -853,7 +878,7 @@ export default function App() {
                         Em Rota
                       </button>
                       <button
-                        onClick={() => handleUpdateOrderStatus(order.id, 'ENTREGUE')}
+                        onClick={() => handleUpdateOrderStatus(order, 'ENTREGUE')}
                         className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all ${
                           order.status === 'ENTREGUE' 
                             ? 'bg-emerald-600 text-white shadow-md' 
@@ -873,7 +898,7 @@ export default function App() {
 
       </main>
 
-      {/* RODAPÉ E BOTÃO DE ÁREA RESTRITA DA EQUIPE */}
+      {/* RODAPÉ E ÁREA RESTRITA */}
       <footer className="bg-slate-900 text-slate-400 py-6 border-t border-slate-800 mt-12">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs">
           <p>© 2026 Sabor & Arte Digital - Todos os direitos reservados.</p>
@@ -890,7 +915,7 @@ export default function App() {
         </div>
       </footer>
 
-      {/* MODAL DE LOGIN DO STAFF */}
+      {/* MODAIS DA APLICAÇÃO */}
       {isStaffLoginOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-xs w-full p-6 shadow-2xl space-y-4 border border-slate-100">
@@ -933,7 +958,6 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL DE CUSTOMIZAÇÃO DE INGREDIENTES DO PRATO */}
       {customizingItem && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-5 border border-slate-100 max-h-[90vh] overflow-y-auto">
@@ -947,7 +971,6 @@ export default function App() {
               </button>
             </div>
 
-            {/* SELEÇÃO DE INGREDIENTES A REMOVER */}
             <div className="space-y-3">
               <div>
                 <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Remover Ingredientes?</h4>
@@ -983,7 +1006,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* CAMPO DE OBSERVAÇÕES */}
             <div className="space-y-1.5">
               <label className="block text-xs font-bold text-slate-700">Observações Adicionais</label>
               <textarea
@@ -995,7 +1017,6 @@ export default function App() {
               />
             </div>
 
-            {/* BOTÃO ADICIONAR AO CARRINHO */}
             <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-4">
               <div>
                 <p className="text-[10px] text-slate-400 font-medium">Preço Unitário</p>
@@ -1012,7 +1033,6 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL DO CARRINHO */}
       {isCartOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-5 border border-slate-100 max-h-[90vh] flex flex-col justify-between">
@@ -1061,7 +1081,6 @@ export default function App() {
                         </p>
                       </div>
 
-                      {/* CONTROLES DE QUANTIDADE */}
                       <div className="flex items-center gap-2 bg-white px-2 py-1 rounded-xl border border-slate-200">
                         <button 
                           onClick={() => handleUpdateQuantity(item.cartId, -1)}
@@ -1124,7 +1143,6 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL DE CHECKOUT / FINALIZAÇÃO DE PEDIDO */}
       {isCheckoutOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-slate-100 max-h-[90vh] overflow-y-auto">
@@ -1230,7 +1248,6 @@ export default function App() {
                 </div>
               )}
 
-              {/* FORMA DE PAGAMENTO */}
               <div className="space-y-2 pt-2 border-t border-slate-100">
                 <label className="block text-xs font-bold text-slate-700">Forma de Pagamento</label>
                 <div className="grid grid-cols-3 gap-2">
@@ -1264,7 +1281,6 @@ export default function App() {
                 </div>
               )}
 
-              {/* RESUMO DE VALORES */}
               <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2 pt-3">
                 <div className="flex justify-between text-xs text-slate-600">
                   <span>Itens ({cart.length})</span>
@@ -1295,12 +1311,9 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL DE IMPRESSÃO DA COMANDA / NOTA FISCAL */}
       {printModalData && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl font-mono text-xs text-slate-900 space-y-4 border border-slate-300">
-            
-            {/* TOPO DA NOTA */}
             <div className="text-center border-b border-dashed border-slate-400 pb-3">
               <h3 className="font-bold text-base uppercase">Sabor & Arte Restaurant</h3>
               <p className="text-[10px] text-slate-500">{RESTAURANT_ORIGIN}</p>
@@ -1309,7 +1322,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* DADOS DO PEDIDO */}
             <div className="space-y-1">
               <div className="flex justify-between">
                 <span>PEDIDO: <strong>{printModalData.order.id}</strong></span>
@@ -1331,7 +1343,6 @@ export default function App() {
               )}
             </div>
 
-            {/* LISTA DE ITENS NA COMANDA */}
             <div className="border-t border-b border-dashed border-slate-400 py-3 space-y-3">
               {printModalData.order.items.map((item, i) => (
                 <div key={i} className="space-y-1">
@@ -1340,7 +1351,6 @@ export default function App() {
                     <span>R$ {(item.price * item.quantity).toFixed(2)}</span>
                   </div>
 
-                  {/* DESTAQUE DE REMOÇÃO DA COZINHA */}
                   {item.removedIngredients && item.removedIngredients.length > 0 && (
                     <div className="pl-3 font-sans text-red-600 font-bold bg-red-50 p-1 rounded border border-red-200">
                       *** SEM {item.removedIngredients.join(', ').toUpperCase()} ***
@@ -1355,7 +1365,6 @@ export default function App() {
               ))}
             </div>
 
-            {/* DETALHES DE VALORES E PAGAMENTO */}
             <div className="space-y-1 text-right">
               {printModalData.order.type === 'DELIVERY' && (
                 <div>TAXA ENTREGA: R$ {printModalData.order.deliveryFee.toFixed(2)}</div>
@@ -1373,7 +1382,6 @@ export default function App() {
               )}
             </div>
 
-            {/* BOTÕES DO MODAL DE IMPRESSÃO */}
             <div className="pt-3 border-t border-slate-200 flex gap-2 font-sans">
               <button
                 onClick={() => {
@@ -1395,7 +1403,6 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL CUSTOMIZADO DE CONFIRMAÇÃO DE RESET DIÁRIO DE PEDIDOS */}
       {isResetConfirmOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl space-y-4 border border-slate-100 text-center">
@@ -1404,9 +1411,9 @@ export default function App() {
             </div>
 
             <div>
-              <h3 className="font-extrabold text-slate-900 text-base">Limpar todos os pedidos?</h3>
+              <h3 className="font-extrabold text-slate-900 text-base">Limpar todos os pedidos no Firebase?</h3>
               <p className="text-xs text-slate-500 mt-1">
-                Esta ação apagará permanentemente todos os pedidos das telas da cozinha e do entregador para iniciar um novo expediente.
+                Esta ação apagará permanentemente todos os pedidos da base de dados na nuvem para todos os dispositivos.
               </p>
             </div>
 
