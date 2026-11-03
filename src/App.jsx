@@ -160,7 +160,6 @@ export default function App() {
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   
-  // Novos campos de endereço com CEP
   const [cep, setCep] = useState('');
   const [street, setStreet] = useState('');
   const [houseNumber, setHouseNumber] = useState('');
@@ -169,6 +168,9 @@ export default function App() {
 
   const [checkoutError, setCheckoutError] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('Cartão de Crédito/Débito');
+  
+  // Estados para gerenciar o troco em dinheiro
+  const [noChangeNeeded, setNoChangeNeeded] = useState(false);
   const [changeFor, setChangeFor] = useState('');
 
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
@@ -177,7 +179,6 @@ export default function App() {
   const fullAddress = `${street}, Nº ${houseNumber}${complement ? ` - ${complement}` : ''}, João Pessoa, PB`;
   const [realDeliveryInfo, setRealDeliveryInfo] = useState({ distanceKm: 0, fee: 4.00, loading: false });
 
-  // Função para buscar CEP via ViaCEP
   const handleCepChange = async (e) => {
     const val = e.target.value.replace(/\D/g, '');
     if (val.length <= 8) {
@@ -205,21 +206,18 @@ export default function App() {
     }
   };
 
-  // Validação: Apenas números no número da casa
   const handleHouseNumberChange = (e) => {
     const val = e.target.value.replace(/\D/g, '');
     setHouseNumber(val);
     setCheckoutError('');
   };
 
-  // Validação: Apenas letras no complemento/bairro
   const handleComplementChange = (e) => {
     const val = e.target.value.replace(/[^a-zA-ZáàâãéèêíïóôõöúçñÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ\s]/g, '');
     setComplement(val);
     setCheckoutError('');
   };
 
-  // Chamada da API Serverless da Vercel para cálculo de distância
   const fetchGoogleDistance = async (destinationAddress) => {
     if (!destinationAddress || !street.trim() || !houseNumber.trim()) return;
 
@@ -378,6 +376,20 @@ export default function App() {
       }
     }
 
+    // Validação do troco se for Dinheiro
+    let finalChangeInfo = 'Não precisa';
+    if (paymentMethod === 'Dinheiro') {
+      if (noChangeNeeded) {
+        finalChangeInfo = 'Não precisa de troco';
+      } else {
+        if (!changeFor.trim()) {
+          setCheckoutError('Por favor, informe o valor para o troco ou marque "Não preciso de troco".');
+          return;
+        }
+        finalChangeInfo = changeFor.trim();
+      }
+    }
+
     const orderId = `PED-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const newOrder = {
@@ -392,7 +404,7 @@ export default function App() {
       distanceKm: orderType === 'DELIVERY' ? realDeliveryInfo.distanceKm : 0,
       deliveryFee: orderType === 'DELIVERY' ? deliveryFee : 0,
       paymentMethod,
-      changeFor: paymentMethod === 'Dinheiro' ? changeFor : '',
+      changeFor: finalChangeInfo,
       status: 'PENDENTE',
       items: [...cart],
       total: cartTotal
@@ -409,6 +421,8 @@ export default function App() {
       setHouseNumber('');
       setComplement('');
       setCheckoutError('');
+      setChangeFor('');
+      setNoChangeNeeded(false);
       setIsCheckoutOpen(false);
       setIsCartOpen(false);
 
@@ -844,7 +858,7 @@ export default function App() {
                           {order.changeFor && (
                             <div className="flex justify-between text-xs">
                               <span className="text-slate-500 font-medium">Troco para:</span>
-                              <span className="font-bold text-amber-600">R$ {order.changeFor}</span>
+                              <span className="font-bold text-amber-600">{order.changeFor}</span>
                             </div>
                           )}
                           <div className="flex justify-between text-xs">
@@ -1184,7 +1198,6 @@ export default function App() {
                   <div className="space-y-2 pt-1 border-t border-slate-100">
                     <label className="block text-xs font-bold text-slate-700">Endereço de Entrega *</label>
                     
-                    {/* Campo de CEP */}
                     <div>
                       <input
                         type="text"
@@ -1251,10 +1264,11 @@ export default function App() {
                 </div>
               )}
 
+              {/* Formas de Pagamento Atualizadas */}
               <div className="space-y-2 pt-2 border-t border-slate-100">
                 <label className="block text-xs font-bold text-slate-700">Forma de Pagamento</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {['Cartão de Crédito/Débito', 'Dinheiro'].map(method => (
+                <div className="grid grid-cols-3 gap-2">
+                  {['Cartão de Crédito/Débito', 'Pix', 'Dinheiro'].map(method => (
                     <button
                       key={method}
                       type="button"
@@ -1271,16 +1285,34 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Opções específicas para Dinheiro */}
               {paymentMethod === 'Dinheiro' && (
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Troco para Quanto?</label>
-                  <input
-                    type="text"
-                    placeholder="Ex: 50.00 ou Não preciso"
-                    value={changeFor}
-                    onChange={(e) => setChangeFor(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-orange-500"
-                  />
+                <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200 space-y-3">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={noChangeNeeded}
+                      onChange={(e) => {
+                        setNoChangeNeeded(e.target.checked);
+                        if (e.target.checked) setChangeFor('');
+                      }}
+                      className="w-4 h-4 text-orange-600 rounded border-slate-300 focus:ring-orange-500"
+                    />
+                    <span className="text-xs font-bold text-slate-700">Não preciso de troco</span>
+                  </label>
+
+                  {!noChangeNeeded && (
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Troco para quanto? * (Ex: 50,00)</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: 50,00"
+                        value={changeFor}
+                        onChange={(e) => setChangeFor(e.target.value)}
+                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-orange-500 font-mono"
+                      />
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1380,7 +1412,7 @@ export default function App() {
               </div>
               {printModalData.order.changeFor && (
                 <div className="font-bold text-amber-700">
-                  TROCO PARA: R$ {printModalData.order.changeFor}
+                  TROCO: {printModalData.order.changeFor}
                 </div>
               )}
             </div>
