@@ -20,7 +20,8 @@ import {
   X,
   Lock,
   LogOut,
-  KeyRound
+  KeyRound,
+  ExternalLink
 } from 'lucide-react';
 
 // --- CONFIGURAÇÃO E INICIALIZAÇÃO DO FIREBASE ---
@@ -122,6 +123,16 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('client');
   const [orders, setOrders] = useState([]);
 
+  // Detecta se o app foi aberto via URL com parâmetro de mesa (ex: ?mesa=Mesa 03)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const mesaParam = params.get('mesa');
+    if (mesaParam) {
+      setSelectedTable(mesaParam);
+      setOrderType('LOCAL');
+    }
+  }, []);
+
   useEffect(() => {
     const ordersRef = collection(db, 'orders');
     const q = query(ordersRef, orderBy('createdAtTimestamp', 'desc'));
@@ -145,7 +156,7 @@ export default function App() {
   const [pinError, setPinError] = useState('');
 
   const [orderType, setOrderType] = useState('LOCAL');
-  const [selectedTable, setSelectedTable] = useState('Mesa 05');
+  const [selectedTable, setSelectedTable] = useState('Mesa 01');
   const [selectedCategory, setSelectedCategory] = useState('Todos');
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -169,15 +180,28 @@ export default function App() {
   const [checkoutError, setCheckoutError] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('Cartão de Crédito/Débito');
   
-  // Estados para gerenciar o troco em dinheiro
   const [noChangeNeeded, setNoChangeNeeded] = useState(false);
   const [changeFor, setChangeFor] = useState('');
 
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
+  const [isQrModalOpen, setIsQrModalOpen] = useState(false);
 
   const RESTAURANT_ORIGIN = 'Rua do Orvalho, 310, João Pessoa, PB';
   const fullAddress = `${street}, Nº ${houseNumber}${complement ? ` - ${complement}` : ''}, João Pessoa, PB`;
   const [realDeliveryInfo, setRealDeliveryInfo] = useState({ distanceKm: 0, fee: 4.00, loading: false });
+
+  // Formatação automática do campo de troco para o padrão monetário (ex: 50,00)
+  const handleTrocoChange = (e) => {
+    let value = e.target.value.replace(/\D/g, '');
+    if (value === '') {
+      setChangeFor('');
+      return;
+    }
+    const numberValue = (parseInt(value, 10) / 100).toFixed(2);
+    const formatted = numberValue.replace('.', ',');
+    setChangeFor(formatted);
+    setCheckoutError('');
+  };
 
   const handleCepChange = async (e) => {
     const val = e.target.value.replace(/\D/g, '');
@@ -376,7 +400,6 @@ export default function App() {
       }
     }
 
-    // Validação do troco se for Dinheiro
     let finalChangeInfo = 'Não precisa';
     if (paymentMethod === 'Dinheiro') {
       if (noChangeNeeded) {
@@ -386,7 +409,7 @@ export default function App() {
           setCheckoutError('Por favor, informe o valor para o troco ou marque "Não preciso de troco".');
           return;
         }
-        finalChangeInfo = changeFor.trim();
+        finalChangeInfo = `R$ ${changeFor.trim()}`;
       }
     }
 
@@ -450,6 +473,9 @@ export default function App() {
     return matchesCategory && matchesSearch;
   });
 
+  // Lista de mesas de 1 a 7 para os QR Codes
+  const tablesList = ['Mesa 01', 'Mesa 02', 'Mesa 03', 'Mesa 04', 'Mesa 05', 'Mesa 06', 'Mesa 07'];
+
   return (
     <div className="min-h-screen bg-slate-100 font-sans text-slate-800 antialiased pb-12">
       <header className="bg-slate-900 text-white sticky top-0 z-40 shadow-lg">
@@ -464,54 +490,65 @@ export default function App() {
             </div>
           </div>
 
-          {isAuthenticatedStaff ? (
-            <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2">
+            {isAuthenticatedStaff && (
               <button
-                onClick={() => setActiveTab('client')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                  activeTab === 'client' ? 'bg-orange-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                }`}
+                onClick={() => setIsQrModalOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold transition-all border border-slate-700"
               >
-                <QrCode size={16} /> Cardápio
+                <QrCode size={16} /> QR Codes (Mesas 1-7)
               </button>
+            )}
+
+            {isAuthenticatedStaff ? (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setActiveTab('client')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    activeTab === 'client' ? 'bg-orange-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                  }`}
+                >
+                  <QrCode size={16} /> Cardápio
+                </button>
+                <button
+                  onClick={() => setActiveTab('kitchen')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    activeTab === 'kitchen' ? 'bg-orange-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                  }`}
+                >
+                  <ChefHat size={16} /> Cozinha ({orders.length})
+                </button>
+                <button
+                  onClick={() => setActiveTab('driver')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    activeTab === 'driver' ? 'bg-orange-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                  }`}
+                >
+                  <Bike size={16} /> Entregador ({orders.filter(o => o.type === 'DELIVERY').length})
+                </button>
+                <button
+                  onClick={handleStaffLogout}
+                  className="p-1.5 bg-red-600/20 text-red-400 hover:bg-red-600 hover:text-white rounded-xl transition-all ml-1"
+                  title="Sair do Modo Equipe"
+                >
+                  <LogOut size={16} />
+                </button>
+              </div>
+            ) : (
               <button
-                onClick={() => setActiveTab('kitchen')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                  activeTab === 'kitchen' ? 'bg-orange-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                }`}
+                onClick={() => setIsCartOpen(true)}
+                className="relative bg-orange-600 hover:bg-orange-700 text-white p-2.5 rounded-xl shadow-md transition-all active:scale-95 flex items-center gap-2 text-xs font-bold"
               >
-                <ChefHat size={16} /> Cozinha ({orders.length})
+                <ShoppingBag size={18} />
+                <span>Carrinho</span>
+                {cart.length > 0 && (
+                  <span className="bg-white text-orange-600 px-1.5 py-0.5 rounded-full text-[10px] font-black">
+                    {cart.reduce((sum, item) => sum + item.quantity, 0)}
+                  </span>
+                )}
               </button>
-              <button
-                onClick={() => setActiveTab('driver')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                  activeTab === 'driver' ? 'bg-orange-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                }`}
-              >
-                <Bike size={16} /> Entregador ({orders.filter(o => o.type === 'DELIVERY').length})
-              </button>
-              <button
-                onClick={handleStaffLogout}
-                className="p-1.5 bg-red-600/20 text-red-400 hover:bg-red-600 hover:text-white rounded-xl transition-all ml-1"
-                title="Sair do Modo Equipe"
-              >
-                <LogOut size={16} />
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => setIsCartOpen(true)}
-              className="relative bg-orange-600 hover:bg-orange-700 text-white p-2.5 rounded-xl shadow-md transition-all active:scale-95 flex items-center gap-2 text-xs font-bold"
-            >
-              <ShoppingBag size={18} />
-              <span>Carrinho</span>
-              {cart.length > 0 && (
-                <span className="bg-white text-orange-600 px-1.5 py-0.5 rounded-full text-[10px] font-black">
-                  {cart.reduce((sum, item) => sum + item.quantity, 0)}
-                </span>
-              )}
-            </button>
-          )}
+            )}
+          </div>
         </div>
       </header>
 
@@ -920,6 +957,64 @@ export default function App() {
         </div>
       </footer>
 
+      {/* Modal de Gerenciamento de QR Codes para as Mesas 1 a 7 */}
+      {isQrModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl space-y-5 border border-slate-100 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <QrCode className="text-orange-600" size={24} />
+                <h3 className="font-extrabold text-slate-900 text-lg">QR Codes das Mesas (1 a 7)</h3>
+              </div>
+              <button 
+                onClick={() => setIsQrModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-500">
+              Cada mesa possui um link exclusivo. Ao escanear o QR Code ou acessar o link correspondente, o cliente entrará direto no cardápio com a sua respectiva mesa selecionada, enviando o pedido automaticamente para a cozinha.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {tablesList.map(mesa => {
+                const mesaUrl = `${window.location.origin}${window.location.pathname}?mesa=${encodeURIComponent(mesa)}`;
+                const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(mesaUrl)}`;
+
+                return (
+                  <div key={mesa} className="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex items-center gap-4">
+                    <img src={qrImageUrl} alt={`QR Code ${mesa}`} className="w-24 h-24 bg-white p-1 rounded-xl border border-slate-200 shadow-sm" />
+                    <div className="space-y-2 flex-1">
+                      <h4 className="font-extrabold text-slate-900 text-sm">{mesa}</h4>
+                      <p className="text-[10px] text-slate-500 break-all">{mesaUrl}</p>
+                      <a
+                        href={mesaUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs font-bold text-orange-600 hover:text-orange-800 underline"
+                      >
+                        Testar Mesa <ExternalLink size={12} />
+                      </a>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="pt-3 border-t border-slate-100 flex justify-end">
+              <button
+                onClick={() => setIsQrModalOpen(false)}
+                className="bg-slate-900 text-white px-5 py-2.5 rounded-xl font-bold text-xs shadow-md"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isStaffLoginOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-xs w-full p-6 shadow-2xl space-y-4 border border-slate-100">
@@ -1259,12 +1354,12 @@ export default function App() {
                 </>
               ) : (
                 <div className="bg-orange-50 p-3 rounded-xl border border-orange-200 text-xs text-orange-800 font-semibold flex items-center gap-2">
-                  <Utensils size={18} />
+                  <QrCode size={18} />
                   Pedido para consumo na <strong>{selectedTable}</strong>
                 </div>
               )}
 
-              {/* Formas de Pagamento Atualizadas */}
+              {/* 3 Formas de Pagamento Atualizadas */}
               <div className="space-y-2 pt-2 border-t border-slate-100">
                 <label className="block text-xs font-bold text-slate-700">Forma de Pagamento</label>
                 <div className="grid grid-cols-3 gap-2">
@@ -1285,7 +1380,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Opções específicas para Dinheiro */}
+              {/* Opções específicas para Dinheiro com formatação automática de troco */}
               {paymentMethod === 'Dinheiro' && (
                 <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200 space-y-3">
                   <label className="flex items-center gap-2 cursor-pointer">
@@ -1304,13 +1399,16 @@ export default function App() {
                   {!noChangeNeeded && (
                     <div>
                       <label className="block text-xs font-bold text-slate-700 mb-1">Troco para quanto? * (Ex: 50,00)</label>
-                      <input
-                        type="text"
-                        placeholder="Ex: 50,00"
-                        value={changeFor}
-                        onChange={(e) => setChangeFor(e.target.value)}
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-orange-500 font-mono"
-                      />
+                      <div className="flex items-center bg-white border border-slate-200 rounded-xl overflow-hidden px-3">
+                        <span className="text-xs font-bold text-slate-500 mr-1">R$</span>
+                        <input
+                          type="text"
+                          placeholder="0,00"
+                          value={changeFor}
+                          onChange={handleTrocoChange}
+                          className="w-full py-2 text-xs focus:outline-none font-mono font-bold"
+                        />
+                      </div>
                     </div>
                   )}
                 </div>
