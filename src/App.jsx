@@ -38,7 +38,6 @@ import {
   orderBy
 } from 'firebase/firestore';
 
-// CREDENCIAIS DO PROJETO TOCA-B1107
 const firebaseConfig = {
   apiKey: "AIzaSyDXRvsTqRgnyvxpHAvpqWy3dl0wd5TyJLk",
   authDomain: "toca-b1107.firebaseapp.com",
@@ -51,7 +50,6 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// --- BANCO DE DADOS SIMULADO DO CARDÁPIO ---
 const MENU_CATEGORIES = ['Todos', 'Hambúrgueres', 'Pratos Principais', 'Bebidas', 'Sobremesas'];
 
 const MENU_ITEMS = [
@@ -124,7 +122,6 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('client');
   const [orders, setOrders] = useState([]);
 
-  // ESCUTA EM TEMPO REAL DO FIREBASE FIRESTORE COM ORDENAÇÃO
   useEffect(() => {
     const ordersRef = collection(db, 'orders');
     const q = query(ordersRef, orderBy('createdAtTimestamp', 'desc'));
@@ -162,29 +159,73 @@ export default function App() {
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  
+  // Novos campos de endereço com CEP
+  const [cep, setCep] = useState('');
   const [street, setStreet] = useState('');
   const [houseNumber, setHouseNumber] = useState('');
   const [complement, setComplement] = useState('');
+  const [cepLoading, setCepLoading] = useState(false);
+
   const [checkoutError, setCheckoutError] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState('Cartão de Crédito');
+  const [paymentMethod, setPaymentMethod] = useState('Cartão de Crédito/Débito');
   const [changeFor, setChangeFor] = useState('');
 
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
 
   const RESTAURANT_ORIGIN = 'Rua do Orvalho, 310, João Pessoa, PB';
-  const GOOGLE_MAPS_API_KEY = 'AIzaSyDrhTuu5nAFQfxAtfnWlfbVKveLTu2EDtk';
-
-  const fullAddress = `${street}${houseNumber ? `, Nº ${houseNumber}` : ''}${complement ? ` (${complement})` : ''}${street ? ', João Pessoa, PB' : ''}`;
+  const fullAddress = `${street}, Nº ${houseNumber}${complement ? ` - ${complement}` : ''}, João Pessoa, PB`;
   const [realDeliveryInfo, setRealDeliveryInfo] = useState({ distanceKm: 0, fee: 4.00, loading: false });
 
-  // --- FUNÇÃO DE CÁLCULO VIA API INTERNA DA VERCEL (SEM CORS) ---
+  // Função para buscar CEP via ViaCEP
+  const handleCepChange = async (e) => {
+    const val = e.target.value.replace(/\D/g, '');
+    if (val.length <= 8) {
+      setCep(val);
+    }
+    if (val.length === 8) {
+      setCepLoading(true);
+      try {
+        const res = await fetch(`https://viacep.com.br/ws/${val}/json/`);
+        const data = await res.json();
+        if (!data.erro) {
+          setStreet(data.logradouro || '');
+          if (data.bairro) {
+            setComplement(data.bairro);
+          }
+          setCheckoutError('');
+        } else {
+          setCheckoutError('CEP não encontrado.');
+        }
+      } catch (err) {
+        console.error('Erro ao buscar CEP:', err);
+      } finally {
+        setCepLoading(false);
+      }
+    }
+  };
+
+  // Validação: Apenas números no número da casa
+  const handleHouseNumberChange = (e) => {
+    const val = e.target.value.replace(/\D/g, '');
+    setHouseNumber(val);
+    setCheckoutError('');
+  };
+
+  // Validação: Apenas letras no complemento/bairro
+  const handleComplementChange = (e) => {
+    const val = e.target.value.replace(/[^a-zA-ZáàâãéèêíïóôõöúçñÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ\s]/g, '');
+    setComplement(val);
+    setCheckoutError('');
+  };
+
+  // Chamada da API Serverless da Vercel para cálculo de distância
   const fetchGoogleDistance = async (destinationAddress) => {
     if (!destinationAddress || !street.trim() || !houseNumber.trim()) return;
 
     setRealDeliveryInfo(prev => ({ ...prev, loading: true }));
 
     try {
-      // Chama a rota serverless hospedada na própria Vercel
       const response = await fetch(`/api/distance?destination=${encodeURIComponent(destinationAddress)}`);
       const data = await response.json();
 
@@ -324,11 +365,15 @@ export default function App() {
 
     if (orderType === 'DELIVERY') {
       if (customerPhone.length !== 11) {
-        setCheckoutError('O telefone deve conter exatamente 11 dígitos (incluindo DDD). Ex: 11999998888');
+        setCheckoutError('O telefone deve conter exatamente 11 dígitos com DDD. Ex: 83999998888');
+        return;
+      }
+      if (!cep.trim() || cep.length !== 8) {
+        setCheckoutError('Por favor, informe um CEP válido com 8 dígitos.');
         return;
       }
       if (!street.trim() || !houseNumber.trim()) {
-        setCheckoutError('Por favor, preencha o nome da rua e o número.');
+        setCheckoutError('Por favor, preencha a rua e o número do endereço.');
         return;
       }
     }
@@ -359,6 +404,7 @@ export default function App() {
       setCart([]);
       setCustomerName('');
       setCustomerPhone('');
+      setCep('');
       setStreet('');
       setHouseNumber('');
       setComplement('');
@@ -369,7 +415,7 @@ export default function App() {
       alert(`Pedido #${orderId} enviado com sucesso! Acompanhe o preparo com nossa equipe.`);
     } catch (err) {
       console.error("Erro ao enviar pedido ao Firebase:", err);
-      alert("Houve um erro ao enviar seu pedido. Verifique se criou a coleção de dados no Firebase no modo de teste.");
+      alert("Houve um erro ao enviar seu pedido.");
     }
   };
 
@@ -489,7 +535,7 @@ export default function App() {
               ) : (
                 <div className="flex items-center gap-2 text-xs font-semibold bg-purple-50 text-purple-800 px-3 py-1.5 rounded-xl border border-purple-200">
                   <Bike size={16} />
-                  <span>Taxa de Entrega: <strong>R$ {deliveryFee.toFixed(2)}</strong></span>
+                  <span>Taxa calculada no fechamento do pedido</span>
                 </div>
               )}
             </div>
@@ -1123,11 +1169,11 @@ export default function App() {
               {orderType === 'DELIVERY' ? (
                 <>
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Telefone / WhatsApp * (Exatamente 11 números)</label>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">Telefone / WhatsApp * (11 dígitos com DDD)</label>
                     <input
                       type="tel"
                       required
-                      placeholder="Ex: 11988887777"
+                      placeholder="Ex: 83999998888"
                       value={customerPhone}
                       onChange={handlePhoneChange}
                       className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-orange-500 font-mono"
@@ -1138,6 +1184,19 @@ export default function App() {
                   <div className="space-y-2 pt-1 border-t border-slate-100">
                     <label className="block text-xs font-bold text-slate-700">Endereço de Entrega *</label>
                     
+                    {/* Campo de CEP */}
+                    <div>
+                      <input
+                        type="text"
+                        maxLength={8}
+                        placeholder="Digite o CEP (somente números)"
+                        value={cep}
+                        onChange={handleCepChange}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-orange-500 font-mono"
+                      />
+                      {cepLoading && <p className="text-[10px] text-orange-600 mt-1">Buscando CEP...</p>}
+                    </div>
+
                     <div>
                       <input
                         type="text"
@@ -1154,24 +1213,24 @@ export default function App() {
                         <input
                           type="text"
                           required
-                          placeholder="Número"
+                          placeholder="Número *"
                           value={houseNumber}
-                          onChange={(e) => setHouseNumber(e.target.value)}
-                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-orange-500"
+                          onChange={handleHouseNumberChange}
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-orange-500 font-mono"
                         />
                       </div>
                       <div className="col-span-2">
                         <input
                           type="text"
-                          placeholder="Complemento / Bairro"
+                          placeholder="Complemento / Bairro (Apenas letras)"
                           value={complement}
-                          onChange={(e) => setComplement(e.target.value)}
+                          onChange={handleComplementChange}
                           className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-orange-500"
                         />
                       </div>
                     </div>
 
-                    {fullAddress.trim() && (
+                    {fullAddress.trim() && street.trim() && houseNumber.trim() && (
                       <div className="mt-2 bg-emerald-50 border border-emerald-200 p-2 rounded-xl text-xs flex justify-between items-center text-emerald-800">
                         {realDeliveryInfo.loading ? (
                           <span className="text-slate-500 font-semibold animate-pulse">Calculando rota exata no Google Maps...</span>
@@ -1188,14 +1247,14 @@ export default function App() {
               ) : (
                 <div className="bg-orange-50 p-3 rounded-xl border border-orange-200 text-xs text-orange-800 font-semibold flex items-center gap-2">
                   <Utensils size={18} />
-                  Pedido para consumo na <strong>{selectedTable}</strong> (Apenas o nome é necessário)
+                  Pedido para consumo na <strong>{selectedTable}</strong>
                 </div>
               )}
 
               <div className="space-y-2 pt-2 border-t border-slate-100">
                 <label className="block text-xs font-bold text-slate-700">Forma de Pagamento</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {['Cartão de Crédito', 'Pix', 'Dinheiro'].map(method => (
+                <div className="grid grid-cols-2 gap-2">
+                  {['Cartão de Crédito/Débito', 'Dinheiro'].map(method => (
                     <button
                       key={method}
                       type="button"
